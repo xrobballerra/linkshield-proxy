@@ -6,9 +6,8 @@ module.exports = async (req, res) => {
   }
 
   try {
-    // ✅ Encode the full URL to handle ? and & safely
-    const encodedUrl = encodeURIComponent(url);
-    const targetUrl = decodeURIComponent(encodedUrl); // ← Decode to get original URL
+    // ✅ Decode the URL before fetching
+    const targetUrl = decodeURIComponent(url);
 
     const response = await fetch(targetUrl, {
       method: req.method,
