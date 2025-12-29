@@ -6,7 +6,11 @@ module.exports = async (req, res) => {
   }
 
   try {
-    const response = await fetch(url, {
+    // ✅ Encode the full URL to handle ? and & safely
+    const encodedUrl = encodeURIComponent(url);
+    const targetUrl = decodeURIComponent(encodedUrl); // ← Decode to get original URL
+
+    const response = await fetch(targetUrl, {
       method: req.method,
       headers: req.headers,
       body: req.body
@@ -17,12 +21,10 @@ module.exports = async (req, res) => {
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-    // ✅ Always end the response
     res.send(data);
     res.end();
 
   } catch (e) {
-    // ✅ Send error as JSON
     res.status(500).json({ error: e.message });
     res.end();
   }
