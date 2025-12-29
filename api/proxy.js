@@ -1,4 +1,3 @@
-api/proxy.js
 // api/proxy.js
 module.exports = async (req, res) => {
   const url = req.query.url;
