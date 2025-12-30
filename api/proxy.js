@@ -11,29 +11,64 @@ export default async function handler(req, res) {
     try {
         const targetUrl = decodeURIComponent(url);
         
-        // 1. Get the user's real IP address from Vercel's headers
-        const userIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+        // Get the user's real IP address from Vercel's headers
+        const userIp = req.headers['x-forwarded-for']?.split(',')[0] || req.headers['x-real-ip'] || 'unknown';
 
         const options = {
             method: req.method,
             headers: {
                 "User-Agent": "LinkShield-Public/1.0",
-                "Authorization": req.headers["authorization"] || "",
                 "Content-Type": "application/x-www-form-urlencoded",
-                "X-Forwarded-For": userIp, // Tell Real-Debrid the user's IP
-                "X-Real-IP": userIp      // Some APIs prefer this header
+                "X-Forwarded-For": userIp,
+                "X-Real-IP": userIp
             }
         };
 
-        if (req.method === 'POST' && req.body) {
-            options.body = typeof req.body === 'object' ? new URLSearchParams(req.body).toString() : req.body;
+        // Add Authorization header if present
+        if (req.headers["authorization"]) {
+            options.headers["Authorization"] = req.headers["authorization"];
+        }
+
+        // Handle POST body properly
+        if (req.method === 'POST') {
+            // Read the raw body from the request
+            const chunks = [];
+            for await (const chunk of req) {
+                chunks.push(chunk);
+            }
+            const body = Buffer.concat(chunks).toString();
+            
+            if (body) {
+                options.body = body;
+            }
         }
 
         const response = await fetch(targetUrl, options);
-        const data = await response.json();
-
-        return res.status(response.status).json(data);
+        const contentType = response.headers.get('content-type');
+        
+        // Handle JSON responses
+        if (contentType && contentType.includes('application/json')) {
+            const data = await response.json();
+            return res.status(response.status).json(data);
+        } else {
+            // Handle text responses
+            const text = await response.text();
+            return res.status(response.status).send(text);
+        }
+        
     } catch (error) {
-        return res.status(500).json({ error: "Proxy Error", details: error.message });
+        console.error('Proxy error:', error);
+        return res.status(500).json({ 
+            error: "Proxy Error", 
+            details: error.message,
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
     }
 }
+
+// This tells Vercel to NOT parse the body automatically
+export const config = {
+    api: {
+        bodyParser: false,
+    },
+};
