@@ -1,65 +1,52 @@
 export default async function handler(req, res) {
-  // Handle CORS preflight
-  if (req.method === 'OPTIONS') {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    return res.status(204).end();
-  }
+  // 1. Extract the target URL from query parameters
+  const { url } = req.query;
 
-  // Get raw URL — no crash on malformed input
-  const urlParam = req.query.url;
-  if (!urlParam) return res.status(400).json({ error: 'Missing url', error_code: 1 });
-
-  // Safely decode — fallback to raw if malformed
-  let targetUrl;
-  try {
-    targetUrl = decodeURIComponent(urlParam);
-  } catch (e) {
-    // If decode fails, assume it's already decoded (common with %20 → space artifacts)
-    targetUrl = urlParam;
-  }
-
-  // Read body only for POST/PUT
-  let body = null;
-  if (req.method === 'POST' || req.method === 'PUT') {
-    body = await new Promise(resolve => {
-      let data = '';
-      req.setEncoding('utf8');
-      req.on('data', chunk => data += chunk);
-      req.on('end', () => resolve(data));
-    }).catch(() => null);
+  // 2. Immediate Validation (Returns 400 instead of crashing with 500)
+  if (!url) {
+    return res.status(400).json({ 
+      error: "Bad Request", 
+      message: "The 'url' query parameter is required." 
+    });
   }
 
   try {
-    const response = await fetch(targetUrl, {
-      method: req.method,
+    // 3. URL Format Validation
+    const targetUrl = new URL(url);
+
+    // 4. Execute the Proxy Request
+    const response = await fetch(targetUrl.toString(), {
+      method: req.method, // Forwards GET, POST, etc.
       headers: {
-        'User-Agent': 'LinkShield/1.0',
-        'Accept': '*/*',
-        ...(req.headers.authorization ? { 'Authorization': req.headers.authorization } : {}),
-        ...(req.headers['content-type'] ? { 'Content-Type': req.headers['content-type'] } : {}),
+        "User-Agent": req.headers["user-agent"] || "Mozilla/5.0",
+        "Accept": "application/json",
       },
-      body: body,
+      // Real-Debrid often blocks requests with no User-Agent
     });
 
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    // 5. Safely handle the response body
+    const contentType = response.headers.get("content-type");
+    let data;
 
-    // Forward response
-    response.headers.forEach((val, key) => {
-      if (!['connection', 'transfer-encoding', 'keep-alive'].includes(key.toLowerCase())) {
-        res.setHeader(key, val);
-      }
+    if (contentType && contentType.includes("application/json")) {
+      data = await response.json();
+    } else {
+      data = await response.text();
+    }
+
+    // 6. Forward the exact status code and data
+    return res.status(response.status).send(data);
+
+  } catch (error) {
+    // 7. Error Logging & Graceful Failure
+    console.error("[Proxy Error]:", error.message);
+
+    // Differentiate between a bad URL and a connection failure
+    const statusCode = error.code === 'ERR_INVALID_URL' ? 400 : 502;
+    
+    return res.status(statusCode).json({
+      error: "Proxy Execution Failed",
+      details: error.message
     });
-
-    res.status(response.status);
-    const buf = await response.buffer();
-    return res.end(buf);
-
-  } catch (e) {
-    console.error('Proxy error:', e.message, 'URL:', targetUrl);
-    return res.status(500).json({ error: 'fetch failed', error_code: -1 });
   }
 }
