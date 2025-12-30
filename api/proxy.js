@@ -1,16 +1,25 @@
-
 export default async function handler(req, res) {
   const url = req.query.url;
   if (!url) return res.status(400).send('No URL provided');
 
   try {
     const targetUrl = decodeURIComponent(url);
+    let body = null;
+
+    if (req.method === 'POST') {
+      // Read raw body for POST
+      body = await getRawBody(req);
+    }
+
     const response = await fetch(targetUrl, {
       method: req.method,
       headers: {
-        'User-Agent': 'LinkShield/1.0',
+        ...req.headers,
+        'content-length': body ? body.length.toString() : undefined,
       },
+      body: body,
     });
+
     const data = await response.text();
 
     // ✅ Critical CORS headers
@@ -18,8 +27,19 @@ export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-    res.send(data);
+    res.status(response.status).send(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+}
+
+// Helper to read raw body
+async function getRawBody(req) {
+  const enc = 'utf8';
+  return new Promise((resolve) => {
+    let data = '';
+    req.setEncoding(enc);
+    req.on('data', (chunk) => data += chunk);
+    req.on('end', () => resolve(data));
+  });
 }
