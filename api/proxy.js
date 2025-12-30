@@ -7,20 +7,22 @@ export default async function handler(req, res) {
     let body = null;
 
     if (req.method === 'POST') {
+      // Read raw body for POST
       body = await getRawBody(req);
     }
 
     const response = await fetch(targetUrl, {
       method: req.method,
       headers: {
-        'User-Agent': 'LinkShield/1.0',
-        'Accept': '*/*',
+        ...req.headers,
+        'content-length': body ? body.length.toString() : undefined,
       },
       body: body,
     });
 
     const data = await response.text();
 
+    // ✅ Critical CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -31,10 +33,12 @@ export default async function handler(req, res) {
   }
 }
 
+// Helper to read raw body
 async function getRawBody(req) {
+  const enc = 'utf8';
   return new Promise((resolve) => {
     let data = '';
-    req.setEncoding('utf8');
+    req.setEncoding(enc);
     req.on('data', (chunk) => data += chunk);
     req.on('end', () => resolve(data));
   });
