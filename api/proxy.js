@@ -12,21 +12,29 @@ export default async function handler(req, res) {
         const targetUrl = decodeURIComponent(url);
         
         // Get the user's real IP address from Vercel's headers
-        const userIp = req.headers['x-forwarded-for']?.split(',')[0] || req.headers['x-real-ip'] || 'unknown';
+        const forwardedFor = req.headers['x-forwarded-for'];
+        const userIp = forwardedFor ? forwardedFor.split(',')[0].trim() : req.headers['x-real-ip'] || 'unknown';
+        
+        console.log('User IP:', userIp); // Debug log
 
         const options = {
             method: req.method,
             headers: {
-                "User-Agent": "LinkShield-Public/1.0",
-                "Content-Type": "application/x-www-form-urlencoded",
-                "X-Forwarded-For": userIp,
-                "X-Real-IP": userIp
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Content-Type": "application/x-www-form-urlencoded"
             }
         };
 
         // Add Authorization header if present
         if (req.headers["authorization"]) {
             options.headers["Authorization"] = req.headers["authorization"];
+        }
+
+        // CRITICAL: Add user's real IP to the request
+        // Real-Debrid checks this to ensure the request comes from the authenticated user
+        if (userIp && userIp !== 'unknown') {
+            options.headers["X-Forwarded-For"] = userIp;
+            options.headers["X-Real-IP"] = userIp;
         }
 
         // Handle POST body properly
@@ -60,8 +68,7 @@ export default async function handler(req, res) {
         console.error('Proxy error:', error);
         return res.status(500).json({ 
             error: "Proxy Error", 
-            details: error.message,
-            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+            details: error.message
         });
     }
 }
