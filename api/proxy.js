@@ -1,23 +1,32 @@
 export default async function handler(req, res) {
+    // CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-    if (req.method === 'OPTIONS') return res.status(200).end();
+    // Handle preflight
+    if (req.method === 'OPTIONS') {
+        return res.status(200).end();
+    }
 
     const { url } = req.query;
-    if (!url) return res.status(400).json({ error: "Missing URL" });
+    
+    if (!url) {
+        return res.status(400).json({ error: "Missing URL parameter" });
+    }
 
     try {
         const targetUrl = decodeURIComponent(url);
+        console.log('Proxying request to:', targetUrl);
         
-        // Get the user's real IP address from Vercel's headers
+        // Get user's real IP from Vercel headers
         const forwardedFor = req.headers['x-forwarded-for'];
-        const userIp = forwardedFor ? forwardedFor.split(',')[0].trim() : req.headers['x-real-ip'] || 'unknown';
+        const userIp = forwardedFor ? forwardedFor.split(',')[0].trim() : 'unknown';
         
-        console.log('User IP:', userIp); // Debug log
+        console.log('User IP:', userIp);
 
-        const options = {
+        // Build fetch options
+        const fetchOptions = {
             method: req.method,
             headers: {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -25,55 +34,63 @@ export default async function handler(req, res) {
             }
         };
 
-        // Add Authorization header if present
-        if (req.headers["authorization"]) {
-            options.headers["Authorization"] = req.headers["authorization"];
+        // Forward authorization header if present
+        if (req.headers.authorization) {
+            fetchOptions.headers.Authorization = req.headers.authorization;
         }
 
-        // CRITICAL: Add user's real IP to the request
-        // Real-Debrid checks this to ensure the request comes from the authenticated user
-        if (userIp && userIp !== 'unknown') {
-            options.headers["X-Forwarded-For"] = userIp;
-            options.headers["X-Real-IP"] = userIp;
+        // Add user's IP to headers (for Real-Debrid IP verification)
+        if (userIp !== 'unknown') {
+            fetchOptions.headers["X-Forwarded-For"] = userIp;
+            fetchOptions.headers["X-Real-IP"] = userIp;
         }
 
-        // Handle POST body properly
+        // Handle POST body
         if (req.method === 'POST') {
-            // Read the raw body from the request
             const chunks = [];
+            
             for await (const chunk of req) {
                 chunks.push(chunk);
             }
-            const body = Buffer.concat(chunks).toString();
             
-            if (body) {
-                options.body = body;
+            const bodyBuffer = Buffer.concat(chunks);
+            const bodyString = bodyBuffer.toString('utf8');
+            
+            if (bodyString) {
+                fetchOptions.body = bodyString;
+                console.log('POST body:', bodyString);
             }
         }
 
-        const response = await fetch(targetUrl, options);
-        const contentType = response.headers.get('content-type');
+        // Make the request
+        const response = await fetch(targetUrl, fetchOptions);
+        const responseText = await response.text();
         
-        // Handle JSON responses
-        if (contentType && contentType.includes('application/json')) {
-            const data = await response.json();
-            return res.status(response.status).json(data);
-        } else {
-            // Handle text responses
-            const text = await response.text();
-            return res.status(response.status).send(text);
+        console.log('Response status:', response.status);
+        console.log('Response body:', responseText.substring(0, 200));
+
+        // Try to parse as JSON
+        let responseData;
+        try {
+            responseData = JSON.parse(responseText);
+        } catch {
+            responseData = responseText;
         }
+
+        // Return response
+        return res.status(response.status).json(responseData);
         
     } catch (error) {
         console.error('Proxy error:', error);
         return res.status(500).json({ 
             error: "Proxy Error", 
-            details: error.message
+            details: error.message,
+            stack: error.stack
         });
     }
 }
 
-// This tells Vercel to NOT parse the body automatically
+// Disable body parser
 export const config = {
     api: {
         bodyParser: false,
