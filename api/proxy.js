@@ -1,5 +1,5 @@
 export default async function handler(req, res) {
-  // ✅ Handle CORS preflight
+  // Handle CORS preflight
   if (req.method === 'OPTIONS') {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -7,70 +7,59 @@ export default async function handler(req, res) {
     return res.status(204).end();
   }
 
-  // ✅ Validate URL
+  // Get raw URL — no crash on malformed input
   const urlParam = req.query.url;
   if (!urlParam) return res.status(400).json({ error: 'Missing url', error_code: 1 });
 
+  // Safely decode — fallback to raw if malformed
   let targetUrl;
   try {
     targetUrl = decodeURIComponent(urlParam);
   } catch (e) {
-    return res.status(400).json({ error: 'Invalid URL encoding', error_code: 2 });
+    // If decode fails, assume it's already decoded (common with %20 → space artifacts)
+    targetUrl = urlParam;
   }
 
-  // ✅ Read raw body for POST/PUT
+  // Read body only for POST/PUT
   let body = null;
   if (req.method === 'POST' || req.method === 'PUT') {
-    body = await new Promise((resolve) => {
+    body = await new Promise(resolve => {
       let data = '';
       req.setEncoding('utf8');
       req.on('data', chunk => data += chunk);
       req.on('end', () => resolve(data));
-    });
+    }).catch(() => null);
   }
 
   try {
-    // ✅ Forward request — compliant with RD TOS
-    const fetchOptions = {
+    const response = await fetch(targetUrl, {
       method: req.method,
       headers: {
         'User-Agent': 'LinkShield/1.0',
         'Accept': '*/*',
+        ...(req.headers.authorization ? { 'Authorization': req.headers.authorization } : {}),
+        ...(req.headers['content-type'] ? { 'Content-Type': req.headers['content-type'] } : {}),
       },
-    };
+      body: body,
+    });
 
-    // ✅ Only forward safe headers (RD requires Authorization, Content-Type)
-    const safe = ['authorization', 'content-type'];
-    for (const [key, val] of Object.entries(req.headers)) {
-      if (safe.includes(key.toLowerCase())) {
-        fetchOptions.headers[key] = val;
-      }
-    }
-
-    if (body !== null) {
-      fetchOptions.body = body;
-      fetchOptions.headers['content-length'] = Buffer.byteLength(body).toString();
-    }
-
-    const response = await fetch(targetUrl, fetchOptions);
-
-    // ✅ Forward response
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-    // Avoid hop-by-hop headers
-    const skip = ['connection', 'keep-alive', 'transfer-encoding'];
+    // Forward response
     response.headers.forEach((val, key) => {
-      if (!skip.includes(key.toLowerCase())) res.setHeader(key, val);
+      if (!['connection', 'transfer-encoding', 'keep-alive'].includes(key.toLowerCase())) {
+        res.setHeader(key, val);
+      }
     });
 
     res.status(response.status);
-    const data = await response.buffer();
-    return res.end(data);
+    const buf = await response.buffer();
+    return res.end(buf);
 
   } catch (e) {
-    console.error('Proxy error:', e.message);
+    console.error('Proxy error:', e.message, 'URL:', targetUrl);
     return res.status(500).json({ error: 'fetch failed', error_code: -1 });
   }
 }
