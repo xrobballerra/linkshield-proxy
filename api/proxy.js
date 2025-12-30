@@ -7,11 +7,9 @@ export default async function handler(req, res) {
     return res.status(204).end();
   }
 
-  // ✅ Validate URL parameter
+  // ✅ Validate URL
   const urlParam = req.query.url;
-  if (!urlParam) {
-    return res.status(400).json({ error: 'Missing url parameter', error_code: 1 });
-  }
+  if (!urlParam) return res.status(400).json({ error: 'Missing url', error_code: 1 });
 
   let targetUrl;
   try {
@@ -23,20 +21,16 @@ export default async function handler(req, res) {
   // ✅ Read raw body for POST/PUT
   let body = null;
   if (req.method === 'POST' || req.method === 'PUT') {
-    body = await new Promise((resolve, reject) => {
+    body = await new Promise((resolve) => {
       let data = '';
       req.setEncoding('utf8');
       req.on('data', chunk => data += chunk);
       req.on('end', () => resolve(data));
-      req.on('error', reject);
-    }).catch(err => {
-      console.error('Body read error:', err);
-      return null;
     });
   }
 
   try {
-    // ✅ Prepare fetch options
+    // ✅ Forward request — compliant with RD TOS
     const fetchOptions = {
       method: req.method,
       headers: {
@@ -45,21 +39,19 @@ export default async function handler(req, res) {
       },
     };
 
-    // ✅ Forward essential headers
-    const safeHeaders = ['authorization', 'content-type'];
-    for (const [key, value] of Object.entries(req.headers)) {
-      if (safeHeaders.includes(key.toLowerCase())) {
-        fetchOptions.headers[key] = value;
+    // ✅ Only forward safe headers (RD requires Authorization, Content-Type)
+    const safe = ['authorization', 'content-type'];
+    for (const [key, val] of Object.entries(req.headers)) {
+      if (safe.includes(key.toLowerCase())) {
+        fetchOptions.headers[key] = val;
       }
     }
 
-    // ✅ Set body and content-length for POST/PUT
     if (body !== null) {
       fetchOptions.body = body;
       fetchOptions.headers['content-length'] = Buffer.byteLength(body).toString();
     }
 
-    // ✅ Make request to target
     const response = await fetch(targetUrl, fetchOptions);
 
     // ✅ Forward response
@@ -67,15 +59,10 @@ export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-    // Copy non-hop-by-hop headers
-    const excludedHeaders = [
-      'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization',
-      'te', 'trailer', 'transfer-encoding', 'upgrade'
-    ];
-    response.headers.forEach((value, key) => {
-      if (!excludedHeaders.includes(key.toLowerCase())) {
-        res.setHeader(key, value);
-      }
+    // Avoid hop-by-hop headers
+    const skip = ['connection', 'keep-alive', 'transfer-encoding'];
+    response.headers.forEach((val, key) => {
+      if (!skip.includes(key.toLowerCase())) res.setHeader(key, val);
     });
 
     res.status(response.status);
